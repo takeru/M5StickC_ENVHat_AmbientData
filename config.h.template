@@ -1,0 +1,7 @@
+#define PROFILE_COUNT 2
+struct Profile profiles[PROFILE_COUNT]{
+  {1, "xx:xx:xx:xx:xx:01", 900001, "xxxxxxxxxxxxxxxx"},
+  {2, "xx:xx:xx:xx:xx:02", 900002, "xxxxxxxxxxxxxxxx"}
+};
+const char* ssid = "SSID";
+const char* password = "password";
