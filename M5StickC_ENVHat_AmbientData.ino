@@ -4,11 +4,15 @@
 #include "Adafruit_Sensor.h"
 #include <Adafruit_BMP280.h>
 #include "Ambient.h"
+#include <Preferences.h>
+
+Preferences preferences;
+char wifi_ssid[33];
+char wifi_key[65];
 
 DHT12 dht12; 
 Adafruit_BMP280 bme;
 WiFiClient client;
-
 
 struct Profile {
   int index;
@@ -33,17 +37,22 @@ void blink(int n){
 }
 
 void setup() {
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, HIGH);
-
   M5.begin();
-  //M5.Axp.ScreenBreath(7);
 
+  preferences.begin("Wi-Fi", true);
+  preferences.getString("ssid", wifi_ssid, sizeof(wifi_ssid));
+  preferences.getString("key", wifi_key, sizeof(wifi_key));
+  preferences.end();
+
+  M5.Axp.ScreenBreath(7);
+  M5.Lcd.fillScreen(BLACK);
   M5.Lcd.setRotation(3);
   M5.Lcd.setTextFont(1);
   M5.Lcd.setTextSize(1);
-  M5.Lcd.fillScreen(BLACK);
-  M5.Lcd.setCursor(0, 0, 2);
+  M5.Lcd.setCursor(0, 1);
+
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH);
 
   Wire.begin(0,26);
   Serial.begin(115200);
@@ -84,13 +93,11 @@ void loop() {
 
   Serial.printf("%2.1f'C %2.0f%% %2.1fhPa\n", temperature, humidity, pressure);
   Serial.printf("%4.2fV %2.1f'C\n", vbatAxp, tempAxp);
-
-  M5.Lcd.setCursor(0, 20, 2);
   M5.Lcd.printf("%2.1f'C %2.0f%% %2.1fhPa\n", temperature, humidity, pressure);
   M5.Lcd.printf("%4.2fV %2.1f'C\n", vbatAxp, tempAxp);
 
   if(profile){
-    WiFi.begin(ssid, password);
+    WiFi.begin(wifi_ssid, wifi_key);
 
     for(int i=0; i<30; i++){
       if(WiFi.status() == WL_CONNECTED){
@@ -115,18 +122,28 @@ void loop() {
       ambient.set(5, tempAxp);
       bool ok = ambient.send();
       WiFi.disconnect();
+      WiFi.mode(WIFI_OFF);
   
       M5.Lcd.printf("ok=%d\n", ok);
       Serial.printf("ok=%d\n", ok);
   
       if(ok){ blink(1); }else{ blink(2); }
-      delay(1000);
     }else{
       blink(3);
     }
   }
 
-  M5.Axp.DeepSleep(SLEEP_SEC(60));
+  RTC_TimeTypeDef time;
+  RTC_DateTypeDef date;
+  M5.Rtc.GetTime(&time);
+  M5.Rtc.GetData(&date);
+  char datetime[20];
+  sprintf(datetime, "%04d-%02d-%02d %02d:%02d:%02d", date.Year, date.Month, date.Date, time.Hours, time.Minutes, time.Seconds);
+  M5.Lcd.printf("%s\n", datetime);
+  Serial.printf("%s\n", datetime);
+  delay(1000);
+
+  M5.Axp.DeepSleep(SLEEP_SEC(60 - time.Seconds));
 
 //  if(digitalRead(M5_BUTTON_HOME) == LOW){
 //    // something
