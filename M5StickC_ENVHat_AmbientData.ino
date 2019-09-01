@@ -5,6 +5,10 @@
 #include <Adafruit_BMP280.h>
 #include "Ambient.h"
 #include <Preferences.h>
+#include <esp_wifi.h>
+#include <esp_bt_main.h>
+#include <esp_bt.h>
+#include <driver/adc.h>
 
 Preferences preferences;
 char wifi_ssid[33];
@@ -37,14 +41,15 @@ void blink(int n){
 }
 
 void setup() {
-  M5.begin();
+  M5.begin(false);
+  M5.Axp.ScreenBreath(7);
+  M5.Lcd.begin();
 
   preferences.begin("Wi-Fi", true);
   preferences.getString("ssid", wifi_ssid, sizeof(wifi_ssid));
   preferences.getString("key", wifi_key, sizeof(wifi_key));
   preferences.end();
 
-  M5.Axp.ScreenBreath(7);
   M5.Lcd.fillScreen(BLACK);
   M5.Lcd.setRotation(3);
   M5.Lcd.setTextFont(1);
@@ -90,11 +95,12 @@ void loop() {
   float pressure    = bme.readPressure() / 100.0;
   double vbatAxp    = M5.Axp.GetVbatData() * 1.1 / 1000;
   float tempAxp     = -144.7 + M5.Axp.GetTempData() * 0.1;
+  double vusbinAxp  = GetVusbinData() * 1.7 /1000;
 
   Serial.printf("%2.1f'C %2.0f%% %2.1fhPa\n", temperature, humidity, pressure);
-  Serial.printf("%4.2fV %2.1f'C\n", vbatAxp, tempAxp);
+  Serial.printf("%4.2fV %2.1f'C %4.2fV\n", vbatAxp, tempAxp, vusbinAxp);
   M5.Lcd.printf("%2.1f'C %2.0f%% %2.1fhPa\n", temperature, humidity, pressure);
-  M5.Lcd.printf("%4.2fV %2.1f'C\n", vbatAxp, tempAxp);
+  M5.Lcd.printf("%4.2fV %2.1f'C %4.2fV\n", vbatAxp, tempAxp, vusbinAxp);
 
   if(profile){
     WiFi.begin(wifi_ssid, wifi_key);
@@ -120,6 +126,7 @@ void loop() {
       ambient.set(3, pressure);
       ambient.set(4, vbatAxp);
       ambient.set(5, tempAxp);
+      ambient.set(6, vusbinAxp);
       bool ok = ambient.send();
       WiFi.disconnect();
       WiFi.mode(WIFI_OFF);
@@ -143,10 +150,37 @@ void loop() {
   Serial.printf("%s\n", datetime);
   delay(1000);
 
+  esp_wifi_stop();
+  esp_bluedroid_disable();
+  esp_bluedroid_deinit();
+  esp_bt_controller_disable();
+  esp_bt_controller_deinit();
+  esp_bt_mem_release(ESP_BT_MODE_BTDM);
+  adc_power_off();
   M5.Axp.DeepSleep(SLEEP_SEC(60 - time.Seconds));
 
 //  if(digitalRead(M5_BUTTON_HOME) == LOW){
 //    // something
 //    while(digitalRead(M5_BUTTON_HOME) == LOW);
 //  }
+}
+
+uint16_t GetVusbinData(void)
+{
+  uint16_t vin = 0;
+
+  Wire1.beginTransmission(0x34);
+  Wire1.write(0x5a);
+  Wire1.endTransmission();
+  Wire1.requestFrom(0x34, 1);
+  uint8_t buf = Wire1.read();
+
+  Wire1.beginTransmission(0x34);
+  Wire1.write(0x5b);
+  Wire1.endTransmission();
+  Wire1.requestFrom(0x34, 1);
+  uint8_t buf2 = Wire1.read();
+
+  vin = ((buf << 4) + buf2); // V
+  return vin;
 }
