@@ -1,5 +1,7 @@
-#define PROFILE_COUNT 2
+#define PROFILE_COUNT 4
 struct Profile profiles[PROFILE_COUNT]{
-  {1, "xx:xx:xx:xx:xx:01", 900001, "xxxxxxxxxxxxxxxx"},
-  {2, "xx:xx:xx:xx:xx:02", 900002, "xxxxxxxxxxxxxxxx"}
+  {1, (uint8_t[]){0xD8,0xA0,0x1D,0x00,0x00,0x01}, 11111, "xxxxxxxxxxxxxxxx", 1, false},
+  {2, (uint8_t[]){0xD8,0xA0,0x1D,0x00,0x00,0x02}, 22222, "xxxxxxxxxxxxxxxx", 1, false},
+  {3, (uint8_t[]){0xD8,0xA0,0x1D,0x00,0x00,0x03}, 33333, "xxxxxxxxxxxxxxxx", 1, false},
+  {4, (uint8_t[]){0xD8,0xA0,0x1D,0x00,0x00,0x04}, 44444, "xxxxxxxxxxxxxxxx", 1, true}
 };
