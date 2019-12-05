@@ -37,7 +37,11 @@ void blink(int n){
 void setup() {
   // M5.begin(...);
   M5.Axp.begin();
-  battery_charge_ctrl(0.0, 0.0, 100); // OFF
+  if(M5.Axp.GetBatVoltage() < 3.7){
+    battery_charge_ctrl(3.7, 3.9, 100); // ON
+  }else{
+    battery_charge_ctrl(0.0, 0.0, 100); // OFF
+  }
   M5.Axp.ScreenBreath(0);
   M5.Lcd.begin();
   M5.Rtc.begin();
@@ -123,7 +127,8 @@ void loop() {
   case 3:
     RTC_TimeTypeDef time;
     M5.Rtc.GetTime(&time);
-    if(time.Minutes%3==0 && profile->battery && 4.5 < M5.Axp.GetVBusVoltage()){
+    // time.Minutes%3==0 &&
+    if(profile->battery && 4.5 < M5.Axp.GetVBusVoltage()){
       if(M5.Axp.GetBatVoltage() < 3.8 || wifiOK==false){
         wifi_disconnect();
         drain_mode = CHARGE_190;
@@ -168,7 +173,11 @@ void loop() {
     break;
   case 5:
     wifi_disconnect();
-    battery_charge_ctrl(0.0, 0.0, 100); // force OFF
+    if(M5.Axp.GetBatVoltage() < 3.7){
+      battery_charge_ctrl(3.7, 3.9, 100); // ON
+    }else{
+      battery_charge_ctrl(0.0, 0.0, 100); // OFF
+    }
     set_lcd_brightness(0);
     set_led_red(false);
     set_led_ir(false);
@@ -191,7 +200,7 @@ void post_sensor_values(){
   float vbatAxp     = M5.Axp.GetBatVoltage();
   float tempAxp     = M5.Axp.GetTempInAXP192();
   float vusbinAxp   = M5.Axp.GetVBusVoltage();
-  Serial.printf("temperature=%.2f humidity=%.2f pressure%.2f\n", temperature, humidity, pressure);
+  Serial.printf("temperature=%.2f humidity=%.2f pressure=%.2f\n", temperature, humidity, pressure);
 
   IPAddress ipAddress = WiFi.localIP();
   Serial.printf("%s\n", ipAddress.toString().c_str());
