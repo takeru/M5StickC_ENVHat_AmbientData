@@ -15,9 +15,12 @@ struct Profile {
   uint32_t channelId;
   char*    writeKey;
   uint32_t interval;
-  bool battery;
+  uint8_t power;
 };
 
+#define PW_AC                 1
+#define PW_BATTERY            2
+#define PW_BATTERY_WITH_RELAY 3
 #include "config.h"
 
 struct Profile *profile = NULL;
@@ -37,11 +40,6 @@ void blink(int n){
 void setup() {
   // M5.begin(...);
   M5.Axp.begin();
-  if(M5.Axp.GetBatVoltage() < 3.7){
-    battery_charge_ctrl(3.7, 3.9, 100); // ON
-  }else{
-    battery_charge_ctrl(0.0, 0.0, 100); // OFF
-  }
   M5.Axp.ScreenBreath(0);
   M5.Lcd.begin();
   M5.Rtc.begin();
@@ -79,6 +77,13 @@ void setup() {
     blink(5);
     delay(1000);
   }
+
+  if(M5.Axp.GetBatVoltage() < 3.7){
+    activate_external_battery();
+    battery_charge_ctrl(3.7, 3.9, 100); // ON
+  }else{
+    battery_charge_ctrl(0.0, 0.0, 100); // OFF
+  }
 }
 
 void loop() {
@@ -87,8 +92,9 @@ void loop() {
   static bool wifiOK = false;
   static bool led_and_udp = false;
   static int drain_mode = 0;
-  #define WIFI_UDP     1
-  #define CHARGE_190   2
+  #define DM_NONE       0
+  #define DM_WIFI_UDP   1
+  #define DM_CHARGE_190 2
   static unsigned long timeout_ms0 = 0;
   static unsigned long timeout_ms1 = 0;
   int sec = rtc_seconds();
@@ -125,37 +131,42 @@ void loop() {
     delay(1);
     break;
   case 3:
-    RTC_TimeTypeDef time;
-    M5.Rtc.GetTime(&time);
-    // time.Minutes%3==0 &&
-    if(profile->battery && 4.5 < M5.Axp.GetVBusVoltage()){
-      if(M5.Axp.GetBatVoltage() < 3.8 || wifiOK==false){
-        wifi_disconnect();
-        drain_mode = CHARGE_190;
-        Serial.printf("drain_mode = CHARGE_190\n");
+    if(profile->power == PW_BATTERY_WITH_RELAY){
+      drain_mode = DM_NONE;
+      state = 5;
+    }else
+    if(profile->power == PW_BATTERY){
+      if(4.5 < M5.Axp.GetVBusVoltage()){ // && rtc_minutes%3==0
+        if(M5.Axp.GetBatVoltage() < 3.8 || wifiOK==false){
+          wifi_disconnect();
+          drain_mode = DM_CHARGE_190;
+          Serial.printf("drain_mode = CHARGE_190\n");
 
-        battery_charge_ctrl(5.0, 5.0, 190); // force ON
+          battery_charge_ctrl(5.0, 5.0, 190); // force ON
 
-        timeout_ms0 = millis() + 5000;
-        timeout_ms1 = 0;
+          timeout_ms0 = millis() + 5000;
+          timeout_ms1 = 0;
+        }else{
+          drain_mode = DM_WIFI_UDP;
+          Serial.printf("drain_mode = WIFI_UDP\n");
+
+          set_lcd_brightness(15);
+          set_led_red(true);
+          set_led_ir(true);
+
+          timeout_ms0 = millis() + 5000;
+          timeout_ms1 = 0;
+        }
+        state = 4;
       }else{
-        drain_mode = WIFI_UDP;
-        Serial.printf("drain_mode = WIFI_UDP\n");
-        
-        set_lcd_brightness(15);
-        set_led_red(true);
-        set_led_ir(true);
-
-        timeout_ms0 = millis() + 5000;
-        timeout_ms1 = 0;
+        state = 5;
       }
-      state = 4;
     }else{
       state = 5;
     }
     break;
   case 4:
-    if(drain_mode==WIFI_UDP){
+    if(drain_mode==DM_WIFI_UDP){
       WiFiUDP udp;
       udp.beginPacket("192.168.0.1", 65535);
       udp.printf("millis=%d", millis());
@@ -164,8 +175,8 @@ void loop() {
     }
     if(timeout_ms1==0 && 150 <= M5.Axp.GetVBusCurrent()){
       timeout_ms1 = millis();
-      if(drain_mode==CHARGE_190){ timeout_ms1 += 1500; }
-      if(drain_mode==WIFI_UDP  ){ timeout_ms1 += 1500; }
+      if(drain_mode==DM_CHARGE_190){ timeout_ms1 += 1500; }
+      if(drain_mode==DM_WIFI_UDP  ){ timeout_ms1 += 1500; }
     }
     if(timeout_ms0 < millis() || (0 < timeout_ms1 && timeout_ms1 < millis())){
       state = 5;
@@ -303,6 +314,12 @@ String rtc_datetime_string(void){
   return String(datetime);
 }
 
+int rtc_minutes(void){
+  RTC_TimeTypeDef time;
+  M5.Rtc.GetTime(&time);
+  return time.Minutes;
+}
+
 int rtc_seconds(void){
   RTC_TimeTypeDef time;
   M5.Rtc.GetTime(&time);
@@ -364,10 +381,11 @@ void wire1_write(uint8_t from, uint8_t addr, uint8_t value){
   Wire1.endTransmission();
 }
 
+#define AXP192_ADDR 0x34
 void battery_charge_ctrl(float vbat_min, float vbat_max, int curr)
 {
   float vbat = M5.Axp.GetBatVoltage();
-  uint8_t reg0x33 = wire1_read(0x34, 0x33);
+  uint8_t reg0x33 = wire1_read(AXP192_ADDR, 0x33);
   uint8_t reg0x33_orig = reg0x33;
   if(reg0x33 & 0x80){
     if(vbat_max < vbat){ reg0x33 &= ~(1<<7); } // OFF
@@ -383,16 +401,16 @@ void battery_charge_ctrl(float vbat_min, float vbat_max, int curr)
   }else{
     reg0x33 = (reg0x33 & 0xF0) | 0b0000;
   }
-  wire1_write(0x34, 0x33, reg0x33);
-  reg0x33 = wire1_read(0x34, 0x33);
+  wire1_write(AXP192_ADDR, 0x33, reg0x33);
+  reg0x33 = wire1_read(AXP192_ADDR, 0x33);
   if(reg0x33 != reg0x33_orig){
     Serial.printf("battery_charge_ctrl reg0x33: %02X->%02X\n", reg0x33_orig, reg0x33); // default=0xC0 OFF=0x40
   }
 }
 
 void set_lcd_brightness(uint8_t brightness){
-  uint8_t reg0x28 = wire1_read(0x34, 0x28);
-  wire1_write(0x34, 0x28, ((reg0x28 & 0x0f) | (brightness << 4)));
+  uint8_t reg0x28 = wire1_read(AXP192_ADDR, 0x28);
+  wire1_write(AXP192_ADDR, 0x28, ((reg0x28 & 0x0f) | (brightness << 4)));
 }
 
 void set_led_red(bool on){
@@ -401,4 +419,25 @@ void set_led_red(bool on){
 
 void set_led_ir(bool on){
   digitalWrite(LED_IR, on ? LOW : HIGH);
+}
+
+#define RELAY_PIN 32
+void activate_external_battery(){
+  if(profile->power != PW_BATTERY_WITH_RELAY){
+    return;
+  }
+  if(4.5 < M5.Axp.GetVBusVoltage()){
+    return;
+  }
+  pinMode(RELAY_PIN, OUTPUT);
+
+  Serial.printf("activate_external_battery before: vbus=%4.2fV,%6.2fmA\n", M5.Axp.GetVBusVoltage(), M5.Axp.GetVBusCurrent());
+  digitalWrite(RELAY_PIN, HIGH);
+  delay(200);
+  Serial.printf("activate_external_battery HIGH-1: vbus=%4.2fV,%6.2fmA\n", M5.Axp.GetVBusVoltage(), M5.Axp.GetVBusCurrent());
+  delay(800);
+  Serial.printf("activate_external_battery HIGH-2: vbus=%4.2fV,%6.2fmA\n", M5.Axp.GetVBusVoltage(), M5.Axp.GetVBusCurrent());
+  digitalWrite(RELAY_PIN, LOW);
+  delay(200);
+  Serial.printf("activate_external_battery after : vbus=%4.2fV,%6.2fmA\n", M5.Axp.GetVBusVoltage(), M5.Axp.GetVBusCurrent());
 }
