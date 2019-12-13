@@ -37,9 +37,15 @@ void blink(int n){
   }
 }
 
+#define AXP192_ADDR 0x34
+
 void setup() {
-  // M5.begin(...);
+  Wire1.begin(21, 22);
+  Wire1.setClock(400000);
+  uint8_t reg0x33 = wire1_read(AXP192_ADDR, 0x33);
   M5.Axp.begin();
+  wire1_write(AXP192_ADDR, 0x33, (wire1_read(AXP192_ADDR, 0x33) & 0x7F) | (reg0x33 & 0x80));
+
   M5.Axp.ScreenBreath(0);
   M5.Lcd.begin();
   M5.Rtc.begin();
@@ -51,7 +57,7 @@ void setup() {
   set_led_red(false);
   set_led_ir(false);
 
-  Wire.begin(0,26);
+  Wire.begin(0,26); // HAT-pin G0,G26. For dht12 and bme.
   Serial.begin(115200);
 
   uint8_t mac[6];
@@ -78,7 +84,9 @@ void setup() {
     Serial.printf("Wait for 0<vbat vbat=%f\n", vbat);
     delay(10);
   }
-  bool charge_on = battery_charge_ctrl(3.4, 4.1, 100); // auto ON
+  #define VBAT_MIN 3.4
+  #define VBAT_MAX 4.1
+  bool charge_on = battery_charge_ctrl(VBAT_MIN, VBAT_MAX, 100); // auto ON
   if(charge_on){
     activate_external_battery();
   }
@@ -182,10 +190,8 @@ void loop() {
     break;
   case 5:
     wifi_disconnect();
-    #define VBAT_MIN 3.4
-    #define VBAT_MAX 4.1
     battery_charge_ctrl(VBAT_MIN, VBAT_MAX, 100); // auto ON
-    //battery_charge_ctrl(0.0, 0.0, 100); // force OFF
+    //battery_charge_ctrl(-5.0, -5.0, 100); // force OFF
 
 //set_lcd_brightness(15);
 //set_led_red(true);
@@ -390,7 +396,6 @@ void wire1_write(uint8_t from, uint8_t addr, uint8_t value){
   Wire1.endTransmission();
 }
 
-#define AXP192_ADDR 0x34
 bool battery_charge_ctrl(float vbat_min, float vbat_max, int curr)
 {
   float vbat = M5.Axp.GetBatVoltage();
