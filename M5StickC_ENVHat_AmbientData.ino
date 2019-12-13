@@ -18,9 +18,9 @@ struct Profile {
   uint8_t power;
 };
 
-#define PW_AC                 1
-#define PW_BATTERY            2
-#define PW_BATTERY_WITH_RELAY 3
+#define PW_USB_AC                 1
+#define PW_USB_BATTERY            2
+#define PW_VIN_BATTERY_RELAY      3
 #include "config.h"
 
 struct Profile *profile = NULL;
@@ -44,14 +44,6 @@ void setup() {
   M5.Lcd.begin();
   M5.Rtc.begin();
   M5.Lcd.fillScreen(BLACK);
-
-  delay(1000);
-
-  if(4.5 < M5.Axp.GetVBusVoltage()){
-    M5.Axp.ScreenBreath(8);
-  }else{
-    M5.Axp.ScreenBreath(7);
-  }
 
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(LED_IR, OUTPUT);
@@ -80,11 +72,15 @@ void setup() {
     delay(1000);
   }
 
-  if(M5.Axp.GetBatVoltage() < 3.7){
+  while(true){
+    float vbat = M5.Axp.GetBatVoltage();
+    if(0.1 < vbat){ break; }
+    Serial.printf("Wait for 0<vbat vbat=%f\n", vbat);
+    delay(10);
+  }
+  bool charge_on = battery_charge_ctrl(3.4, 4.1, 100); // auto ON
+  if(charge_on){
     activate_external_battery();
-    battery_charge_ctrl(3.7, 3.9, 100); // ON
-  }else{
-    battery_charge_ctrl(0.0, 0.0, 100); // OFF
   }
 }
 
@@ -133,11 +129,11 @@ void loop() {
     delay(1);
     break;
   case 3:
-    if(profile->power == PW_BATTERY_WITH_RELAY){
+    if(profile->power == PW_VIN_BATTERY_RELAY){
       drain_mode = DM_NONE;
       state = 5;
     }else
-    if(profile->power == PW_BATTERY){
+    if(profile->power == PW_USB_BATTERY){
       if(4.5 < M5.Axp.GetVBusVoltage()){ // && rtc_minutes%3==0
         if(M5.Axp.GetBatVoltage() < 3.8 || wifiOK==false){
           wifi_disconnect();
@@ -186,11 +182,10 @@ void loop() {
     break;
   case 5:
     wifi_disconnect();
-    if(M5.Axp.GetBatVoltage() < 3.7){
-      battery_charge_ctrl(3.7, 3.9, 100); // ON
-    }else{
-      battery_charge_ctrl(0.0, 0.0, 100); // OFF
-    }
+    #define VBAT_MIN 3.4
+    #define VBAT_MAX 4.1
+    battery_charge_ctrl(VBAT_MIN, VBAT_MAX, 100); // auto ON
+    //battery_charge_ctrl(0.0, 0.0, 100); // force OFF
 
 //set_lcd_brightness(15);
 //set_led_red(true);
@@ -222,14 +217,14 @@ void post_sensor_values(){
   float pressure    = bme.readPressure() / 100.0;
   float vbatAxp     = M5.Axp.GetBatVoltage();
   float tempAxp     = M5.Axp.GetTempInAXP192();
-  float vusbinAxp   = M5.Axp.GetVBusVoltage();
+  float voltage     = profile->power==PW_VIN_BATTERY_RELAY ? M5.Axp.GetVinVoltage() : M5.Axp.GetVBusVoltage();
   Serial.printf("temperature=%.2f humidity=%.2f pressure=%.2f\n", temperature, humidity, pressure);
 
   IPAddress ipAddress = WiFi.localIP();
   Serial.printf("%s\n", ipAddress.toString().c_str());
 
   if(profile){
-    bool ok = send_to_ambient(temperature, humidity, pressure, vbatAxp, tempAxp, vusbinAxp);
+    bool ok = send_to_ambient(temperature, humidity, pressure, vbatAxp, tempAxp, voltage);
     Serial.printf("ok=%d\n", ok);
     if(ok){ blink(1); }else{ blink(2); }
   }else{
@@ -340,13 +335,15 @@ int rtc_seconds(void){
 
 void print_status(void){
   String datetime = rtc_datetime_string();
-  Serial.printf("ms=%d rtc=%s bat=%.2fV,%.2fmA vbus=%.2fV,%.2fmA temp=%.2f\n",
+  Serial.printf("ms=%d rtc=%s bat=%.2fV,%.2fmA vbus=%.2fV,%.2fmA vin=%.2fV,%.2fmA temp=%.2f\n",
     millis(),
     datetime.c_str(),
     M5.Axp.GetBatVoltage(),
     M5.Axp.GetBatCurrent(),
     M5.Axp.GetVBusVoltage(),
     M5.Axp.GetVBusCurrent(),
+    M5.Axp.GetVinVoltage(),
+    M5.Axp.GetVinCurrent(),
     M5.Axp.GetTempInAXP192()
   );
 }
@@ -394,7 +391,7 @@ void wire1_write(uint8_t from, uint8_t addr, uint8_t value){
 }
 
 #define AXP192_ADDR 0x34
-void battery_charge_ctrl(float vbat_min, float vbat_max, int curr)
+bool battery_charge_ctrl(float vbat_min, float vbat_max, int curr)
 {
   float vbat = M5.Axp.GetBatVoltage();
   uint8_t reg0x33 = wire1_read(AXP192_ADDR, 0x33);
@@ -415,9 +412,11 @@ void battery_charge_ctrl(float vbat_min, float vbat_max, int curr)
   }
   wire1_write(AXP192_ADDR, 0x33, reg0x33);
   reg0x33 = wire1_read(AXP192_ADDR, 0x33);
+  bool charge_on = reg0x33 & 0x80;
   //if(reg0x33 != reg0x33_orig){
-    Serial.printf("battery_charge_ctrl reg0x33: %02X->%02X charge=%s curr=%d\n", reg0x33_orig, reg0x33, reg0x33 & 0x80 ? "ON" : "OFF", curr); // default=0xC0 OFF=0x40
+    Serial.printf("battery_charge_ctrl reg0x33: %02X->%02X charge=%s curr=%d\n", reg0x33_orig, reg0x33, charge_on ? "ON" : "OFF", curr); // default=0xC0 OFF=0x40
   //}
+  return charge_on;
 }
 
 void set_lcd_brightness(uint8_t brightness){
@@ -435,7 +434,7 @@ void set_led_ir(bool on){
 
 #define RELAY_PIN 32
 void activate_external_battery(){
-  if(profile->power != PW_BATTERY_WITH_RELAY){
+  if(profile->power != PW_VIN_BATTERY_RELAY){
     return;
   }
   if(4.5 < M5.Axp.GetVinVoltage()){
