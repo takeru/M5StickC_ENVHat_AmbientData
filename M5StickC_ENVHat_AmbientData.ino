@@ -45,6 +45,8 @@ void setup() {
   M5.Rtc.begin();
   M5.Lcd.fillScreen(BLACK);
 
+  delay(1000);
+
   if(4.5 < M5.Axp.GetVBusVoltage()){
     M5.Axp.ScreenBreath(8);
   }else{
@@ -87,7 +89,7 @@ void setup() {
 }
 
 void loop() {
-  static int state = 5;
+  static int state = 1;
   static int last_sec = rtc_seconds();
   static bool wifiOK = false;
   static bool led_and_udp = false;
@@ -189,6 +191,16 @@ void loop() {
     }else{
       battery_charge_ctrl(0.0, 0.0, 100); // OFF
     }
+
+//set_lcd_brightness(15);
+//set_led_red(true);
+//set_led_ir(true);
+//while(rtc_seconds() < 54){
+//  print_status();
+//  update_lcd();
+//  delay(1000);
+//}
+
     set_lcd_brightness(0);
     set_led_red(false);
     set_led_ir(false);
@@ -403,9 +415,9 @@ void battery_charge_ctrl(float vbat_min, float vbat_max, int curr)
   }
   wire1_write(AXP192_ADDR, 0x33, reg0x33);
   reg0x33 = wire1_read(AXP192_ADDR, 0x33);
-  if(reg0x33 != reg0x33_orig){
-    Serial.printf("battery_charge_ctrl reg0x33: %02X->%02X\n", reg0x33_orig, reg0x33); // default=0xC0 OFF=0x40
-  }
+  //if(reg0x33 != reg0x33_orig){
+    Serial.printf("battery_charge_ctrl reg0x33: %02X->%02X charge=%s curr=%d\n", reg0x33_orig, reg0x33, reg0x33 & 0x80 ? "ON" : "OFF", curr); // default=0xC0 OFF=0x40
+  //}
 }
 
 void set_lcd_brightness(uint8_t brightness){
@@ -426,18 +438,11 @@ void activate_external_battery(){
   if(profile->power != PW_BATTERY_WITH_RELAY){
     return;
   }
-  if(4.5 < M5.Axp.GetVBusVoltage()){
+  if(4.5 < M5.Axp.GetVinVoltage()){
     return;
   }
   pinMode(RELAY_PIN, OUTPUT);
-
-  Serial.printf("activate_external_battery before: vbus=%4.2fV,%6.2fmA\n", M5.Axp.GetVBusVoltage(), M5.Axp.GetVBusCurrent());
   digitalWrite(RELAY_PIN, HIGH);
-  delay(200);
-  Serial.printf("activate_external_battery HIGH-1: vbus=%4.2fV,%6.2fmA\n", M5.Axp.GetVBusVoltage(), M5.Axp.GetVBusCurrent());
-  delay(800);
-  Serial.printf("activate_external_battery HIGH-2: vbus=%4.2fV,%6.2fmA\n", M5.Axp.GetVBusVoltage(), M5.Axp.GetVBusCurrent());
+  delay(1000);
   digitalWrite(RELAY_PIN, LOW);
-  delay(200);
-  Serial.printf("activate_external_battery after : vbus=%4.2fV,%6.2fmA\n", M5.Axp.GetVBusVoltage(), M5.Axp.GetVBusCurrent());
 }
