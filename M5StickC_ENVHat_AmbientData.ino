@@ -4,10 +4,12 @@
 #include <Adafruit_BMP280.h>
 #include "Ambient.h"
 #include <Preferences.h>
+#include <ArduinoOTA.h>
 
 DHT12 dht12; 
 Adafruit_BMP280 bme;
 WiFiClient client;
+bool ota_active = false;
 
 struct Profile {
   int index;
@@ -16,11 +18,14 @@ struct Profile {
   char*    writeKey;
   uint32_t interval;
   uint8_t power;
+  uint8_t module;
 };
 
 #define PW_USB_AC                 1
 #define PW_USB_BATTERY            2
 #define PW_VIN_BATTERY_RELAY      3
+#define MODULE_HAT  1
+#define MODULE_UNIT 2
 #include "config.h"
 
 struct Profile *profile = NULL;
@@ -42,9 +47,9 @@ void blink(int n){
 void setup() {
   Wire1.begin(21, 22);
   Wire1.setClock(400000);
-  uint8_t reg0x33 = wire1_read(AXP192_ADDR, 0x33);
+  uint8_t reg0x33 = wire1_read(AXP192_ADDR, 0x33); // read charge bit
   M5.Axp.begin();
-  wire1_write(AXP192_ADDR, 0x33, (wire1_read(AXP192_ADDR, 0x33) & 0x7F) | (reg0x33 & 0x80));
+  wire1_write(AXP192_ADDR, 0x33, (wire1_read(AXP192_ADDR, 0x33) & 0x7F) | (reg0x33 & 0x80)); // restore charge bit
 
   M5.Axp.ScreenBreath(0);
   M5.Lcd.begin();
@@ -57,7 +62,6 @@ void setup() {
   set_led_red(false);
   set_led_ir(false);
 
-  Wire.begin(0,26); // HAT-pin G0,G26. For dht12 and bme.
   Serial.begin(115200);
 
   uint8_t mac[6];
@@ -69,6 +73,22 @@ void setup() {
       profile = &profiles[i];
       break;
     }
+  }
+  if(profile==NULL){
+    Serial.printf("profile not found.\n");
+    delay(1000 * 10);
+  }
+
+  switch(profile->module){
+  case MODULE_HAT:
+    Wire.begin(0,26); // HAT-pin G0,G26. For dht12 and bme.
+    break;
+  case MODULE_UNIT:
+    Wire.begin(32, 33, 100000); // GROVE. For ENV Unit
+    break;
+  default:
+    Serial.printf("profile->module is unknown.\n");
+    break;
   }
 
   while (!bme.begin(0x76)){
@@ -84,15 +104,17 @@ void setup() {
     Serial.printf("Wait for 0<vbat vbat=%f\n", vbat);
     delay(10);
   }
-  #define VBAT_MIN 3.4
-  #define VBAT_MAX 4.1
+  #define VBAT_MIN 3.70
+  #define VBAT_MAX 4.05
   bool charge_on = battery_charge_ctrl(VBAT_MIN, VBAT_MAX, 100); // auto ON
-  if(charge_on){
+  //if(charge_on){
     activate_external_battery();
-  }
+  //}
 }
 
 void loop() {
+  ota();
+
   static int state = 1;
   static int last_sec = rtc_seconds();
   static bool wifiOK = false;
@@ -130,6 +152,7 @@ void loop() {
   case 2:
     if(1 <= sec && sec < 15){
       if(wifiOK){
+        activate_external_battery();
         post_sensor_values();
       }
       state = 3;
@@ -207,7 +230,7 @@ void loop() {
     set_led_ir(false);
 
     int32_t sleep_ms = (57-rtc_seconds())*1000;
-    if(1000<sleep_ms){
+    if(1000<sleep_ms && ota_active==false){
       Serial.printf("DeepSleep sleep_ms=%d\n", sleep_ms);
       Serial.flush();
       M5.Axp.DeepSleep(sleep_ms*1000);
@@ -296,6 +319,8 @@ bool wifi_connect(int timeout_ms)
   preferences.getString("ssid", wifi_ssid, sizeof(wifi_ssid));
   preferences.getString("key", wifi_key, sizeof(wifi_key));
   preferences.end();
+
+  Serial.printf("wifi_ssid=%s\n", wifi_ssid);
 
   WiFi.begin(wifi_ssid, wifi_key);
   unsigned long start_ms = millis();
@@ -447,6 +472,59 @@ void activate_external_battery(){
   }
   pinMode(RELAY_PIN, OUTPUT);
   digitalWrite(RELAY_PIN, HIGH);
-  delay(1000);
+  delay(500);
   digitalWrite(RELAY_PIN, LOW);
+
+  for(int i=0; i<10; i++){
+    if(4.5 < M5.Axp.GetVinVoltage()){
+      return;
+    }
+    delay(100);
+  }
+}
+
+void ota(){
+  static int state = 0;
+  switch(state){
+  case 0:
+    if(WiFi.status() == WL_CONNECTED){
+      state = 1;
+    }
+    break;
+  case 1:
+    ArduinoOTA.setHostname((String("env") + String(profile->index)).c_str());
+    ArduinoOTA
+    .onStart([]() {
+      ota_active = true;
+      String type;
+      if (ArduinoOTA.getCommand() == U_FLASH)
+        type = "sketch";
+      else // U_SPIFFS
+        type = "filesystem";
+      // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+      Serial.println("Start updating " + type);
+    })
+    .onEnd([]() {
+      ota_active = false;
+      Serial.println("\nEnd");
+    })
+    .onProgress([](unsigned int progress, unsigned int total) {
+      Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    })
+    .onError([](ota_error_t error) {
+      ota_active = false;
+      Serial.printf("Error[%u]: ", error);
+      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+      else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
+    ArduinoOTA.begin();
+    state = 2;
+    break;
+  case 2:
+    ArduinoOTA.handle();
+    break;
+  }
 }
