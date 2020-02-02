@@ -22,8 +22,11 @@ struct Profile {
 };
 
 #define PW_USB_AC                 1
-#define PW_USB_BATTERY            2
-#define PW_VIN_BATTERY_RELAY      3
+#define PW_USB_BATTERY_SMART      2
+#define PW_USB_BATTERY_DUMB       3
+#define PW_VIN_BATTERY_RELAY      4
+#define PW_VIN_18650C             5
+
 #define MODULE_HAT  1
 #define MODULE_UNIT 2
 #include "config.h"
@@ -160,11 +163,7 @@ void loop() {
     delay(1);
     break;
   case 3:
-    if(profile->power == PW_VIN_BATTERY_RELAY){
-      drain_mode = DM_NONE;
-      state = 5;
-    }else
-    if(profile->power == PW_USB_BATTERY){
+    if(profile->power == PW_USB_BATTERY_SMART){
       if(4.5 < M5.Axp.GetVBusVoltage()){ // && rtc_minutes%3==0
         if(M5.Axp.GetBatVoltage() < 3.8 || wifiOK==false){
           wifi_disconnect();
@@ -191,6 +190,7 @@ void loop() {
         state = 5;
       }
     }else{
+      drain_mode = DM_NONE;
       state = 5;
     }
     break;
@@ -246,7 +246,13 @@ void post_sensor_values(){
   float pressure    = bme.readPressure() / 100.0;
   float vbatAxp     = M5.Axp.GetBatVoltage();
   float tempAxp     = M5.Axp.GetTempInAXP192();
-  float voltage     = profile->power==PW_VIN_BATTERY_RELAY ? M5.Axp.GetVinVoltage() : M5.Axp.GetVBusVoltage();
+  float voltage     = 0.0;
+  if(profile->power==PW_VIN_BATTERY_RELAY || profile->power==PW_VIN_18650C){
+    voltage = M5.Axp.GetVinVoltage();
+  }else{
+    voltage = M5.Axp.GetVBusVoltage();
+  }
+
   Serial.printf("temperature=%.2f humidity=%.2f pressure=%.2f\n", temperature, humidity, pressure);
 
   IPAddress ipAddress = WiFi.localIP();
