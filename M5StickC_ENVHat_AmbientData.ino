@@ -153,7 +153,7 @@ void loop() {
     }
     break;
   case 2:
-    if(1 <= sec && sec < 15){
+    if(5 <= sec && sec < 15){
       if(wifiOK){
         activate_external_battery();
         post_sensor_values();
@@ -230,6 +230,7 @@ void loop() {
     set_led_ir(false);
 
     int32_t sleep_ms = (57-rtc_seconds())*1000;
+    sleep_ms += 60 * 1000 * (profile->interval - rtc_minutes() % profile->interval - 1);
     if(1000<sleep_ms && ota_active==false){
       Serial.printf("DeepSleep sleep_ms=%d\n", sleep_ms);
       Serial.flush();
